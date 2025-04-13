@@ -35,12 +35,15 @@ def main():
     #       2D Plane Demo
     # ############################################################
     time = 1.0
-    nx = 64
-    nz = 64
+    nx = 65
+    nz = 65
     n_points = nx * nz
-    x_points = np.linspace(0.0, 0.4 * np.pi, nx, dtype=np.float64)
+    x_points = np.linspace(0.0, 0.5 * np.pi, nx, dtype=np.float64)
+    print("x_points step = ", x_points[1] - x_points[0])
+    print(x_points.size, x_points.shape)
+    print(x_points[0], x_points[1], x_points[-1])
     y_points = 0.9
-    z_points = np.linspace(0.0, 0.15 * np.pi, nz, dtype=np.float64)
+    z_points = np.linspace(0.0, 0.125 * np.pi, nz, dtype=np.float64)
     points = np.array([axis.ravel() for axis in np.meshgrid(x_points, y_points, z_points, indexing='ij')],
                       dtype = np.float64).T
     result = getData(dataset, variable, time, temporal_method, spatial_method, spatial_operator, points)
@@ -49,8 +52,15 @@ def main():
 
     print(f'num points = {len(points)}')
     print(f'\npoints = \n-\n{points}')
-    # the 1st time index of result corresponds to the final time for the "position" variable and the initial time for all other variables.
+    # the 1st time index of result corresponds to the final time for the "position"
+    # variable and the initial time for all other variables.
     print(f'\nresult (1st time index) = \n-\n{result[0]}\n')
+
+    """
+    Save result to TSV file
+    """
+    output_filename = 'turbulence_2D'
+    write_interpolation_tsv_file(dataset, points, result, output_filename)
 
     """
     with result, generate a 2D contour plot.
