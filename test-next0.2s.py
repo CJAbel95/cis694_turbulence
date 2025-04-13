@@ -1,5 +1,5 @@
-# === Turbulent Flow Forecasting with Correct Domain Units (0 to 2π) ===
-# Updated to extract physically meaningful velocity slices for DL training
+# === Turbulent Flow Forecasting from Saved Image Dataset ===
+# Uses pre-saved training_slices (every 0.01s from 0 to 5s) to predict 0.2s ahead
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,78 +7,51 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from givernylocal.turbulence_dataset import turb_dataset
-from givernylocal.turbulence_toolkit import getData
+from PIL import Image
 import os
-import time
+import glob
 
 # === PARAMETERS ===
-auth_token = 'edu.csuohio.vikes.s.mortazaviannajafabadi-38a671ff'
-dataset_title = 'isotropic1024coarse'
-output_path = './giverny_output'
 save_img_dir = './training_slices'
-variable = 'velocity'
-spatial_method = 'lag6'
-temporal_method = 'none'
-spatial_operator = 'field'
+img_size = 128  # assumes 128x128 images
+seq_len = 3
+forecast_gap = 20  # since dt=0.01s, 0.2s = 20 steps
 
-# Create folder to save training data images
-os.makedirs(save_img_dir, exist_ok=True)
+# === Load Data from PNGs ===
+img_paths = sorted(glob.glob(os.path.join(save_img_dir, 'slice_t*.png')))
 
-# === Instantiate Dataset ===
-dataset = turb_dataset(dataset_title=dataset_title, output_path=output_path, auth_token=auth_token)
-
-# === Generate 2D u-velocity slices over time ===
-nx = ny = 128
-x_points = np.linspace(0.0, 2 * np.pi, nx)
-y_points = np.linspace(0.0, 2 * np.pi, ny)
-z = np.pi  # midplane at z = π
-
-T_start = 0.0
-T_end = 5
-T_delta = 0.01
-T_list = np.arange(T_start, T_end + T_delta, T_delta)
-
+# Convert all images to tensors
 slices = []
-
-for i, t in enumerate(T_list):
-    print(f"Querying time: {t:.3f}...")
-    points = np.array([axis.ravel() for axis in np.meshgrid(x_points, y_points, [z], indexing='ij')], dtype=np.float64).T
-    try:
-        result = getData(dataset, variable, t, temporal_method, spatial_method, spatial_operator, points)
-        u_field = np.array(result[0])[:, 0].reshape((nx, ny))
-        slices.append(u_field)
-
-        # Save to image
-        plt.imsave(f"{save_img_dir}/slice_t{t:.3f}.png", u_field, cmap='seismic', vmin=-3, vmax=3)
-    except Exception as e:
-        print(f"Warning: Failed at t={t:.3f} due to {e}. Skipping.")
-        continue
+for img_path in img_paths:
+    img = Image.open(img_path).convert('L')  # grayscale
+    img = np.array(img).astype(np.float32) / 255.0  # scale 0-1
+    img = (img - 0.5) * 6.0  # rescale to roughly [-3, 3] assuming vmin/vmax used in saving
+    slices.append(img)
 
 slices = np.array(slices)
-print("Shape of dataset:", slices.shape)
+print("Loaded shape:", slices.shape)
 
 # === Normalize ===
 mean = slices.mean()
 std = slices.std()
 slices = (slices - mean) / std
 
-# === Dataset Preparation ===
-class TurbulenceDataset(Dataset):
-    def __init__(self, data, seq_len=3):
+# === Dataset ===
+class TurbulenceForecastDataset(Dataset):
+    def __init__(self, data, seq_len, forecast_gap):
         self.data = data
         self.seq_len = seq_len
+        self.forecast_gap = forecast_gap
 
     def __len__(self):
-        return len(self.data) - self.seq_len
+        return len(self.data) - self.seq_len - self.forecast_gap
 
     def __getitem__(self, idx):
-        input_seq = self.data[idx:idx + self.seq_len]  # (seq_len, H, W)
-        target = self.data[idx + self.seq_len]          # (H, W)
+        input_seq = self.data[idx : idx + self.seq_len]  # (seq_len, H, W)
+        target = self.data[idx + self.seq_len + self.forecast_gap - 1]  # predict t+0.2s
         return torch.tensor(input_seq, dtype=torch.float32), torch.tensor(target, dtype=torch.float32)
 
-seq_len = 3
-dataset = TurbulenceDataset(slices, seq_len)
+dataset = TurbulenceForecastDataset(slices, seq_len=seq_len, forecast_gap=forecast_gap)
 dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
 
 # === CNN + Transformer Architecture ===
@@ -92,13 +65,13 @@ class ConvTransformer(nn.Module):
             nn.ReLU()
         )
         self.flatten = nn.Flatten(start_dim=2)
-        self.proj = nn.Linear(32 * nx * ny, hidden_dim)
+        self.proj = nn.Linear(32 * img_size * img_size, hidden_dim)
         self.transformer = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=4), num_layers=2
         )
         self.decoder = nn.Sequential(
-            nn.Linear(hidden_dim, 32 * nx * ny),
-            nn.Unflatten(1, (32, nx, ny)),
+            nn.Linear(hidden_dim, 32 * img_size * img_size),
+            nn.Unflatten(1, (32, img_size, img_size)),
             nn.ConvTranspose2d(32, 16, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.ConvTranspose2d(16, 1, kernel_size=5, padding=2)
@@ -107,14 +80,14 @@ class ConvTransformer(nn.Module):
     def forward(self, x):
         B, T, H, W = x.shape
         x = x.unsqueeze(2)  # (B, T, 1, H, W)
-        x = x.view(B * T, 1, H, W)  # reshape for conv
-        x = self.encoder(x)  # (B*T, C, H, W)
-        x = x.view(B, T, -1)  # (B, T, flat)
-        x = self.proj(x)      # (B, T, hidden_dim)
-        x = x.permute(1, 0, 2)  # (T, B, hidden)
-        x = self.transformer(x)  # (T, B, hidden)
-        x = x[-1]  # last timestep
-        x = self.decoder(x).squeeze(1)  # (B, H, W)
+        x = x.view(B * T, 1, H, W)
+        x = self.encoder(x)
+        x = x.view(B, T, -1)
+        x = self.proj(x)
+        x = x.permute(1, 0, 2)
+        x = self.transformer(x)
+        x = x[-1]
+        x = self.decoder(x).squeeze(1)
         return x
 
 # === Train Model ===
@@ -149,7 +122,7 @@ plt.colorbar()
 
 plt.subplot(1, 3, 2)
 plt.imshow(sample_target, cmap='seismic', vmin=-3, vmax=3)
-plt.title("True Next Frame")
+plt.title("Target Frame (t+0.2s)")
 plt.colorbar()
 
 plt.subplot(1, 3, 3)
