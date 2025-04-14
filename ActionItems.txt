@@ -1,0 +1,16 @@
+Meeting on 04/13/2025
+---------------------
+Database description: https://turbulence.pha.jhu.edu/datasets.aspx
+
+Next Steps
+1. Improve structure of transformer model.
+2. Try to see how far out in time we can project before losing accuracy.
+3. Try other models (RNN, LSTM, Vision Transformer)
+4. Try using SSIM loss rather than MSE for results presentation.
+5. Increasing resolution of images.
+6. Try existing model with Channel flow.  Also try with pressure instead of velocity.
+7. Try a model that takes both pressure and velocity images as input, and see whether we can get a
+   better (or longer) projection with both than with a single model applied to one at a time.
+8. Try training a model with greatly increased resolution -- does it make a difference in either
+   accuracy or duration.
+9. Make sure we have a good understanding of the data captured in each database.
