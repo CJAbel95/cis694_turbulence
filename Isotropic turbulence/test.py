@@ -14,7 +14,7 @@ import time
 
 # === PARAMETERS ===
 auth_token = 'edu.csuohio.vikes.s.mortazaviannajafabadi-38a671ff'
-dataset_title = 'isotropic1024coarse'
+dataset_title = 'channel5200'
 output_path = './giverny_output'
 save_img_dir = './training_slices'
 variable = 'velocity'
