@@ -6,12 +6,14 @@ from givernylocal.turbulence_toolkit import getData
 
 # === PARAMETERS ===
 auth_token = 'edu.csuohio.vikes.s.mortazaviannajafabadi-38a671ff'
-dataset_title = 'channel5200'
+dataset_title = 'isotropic1024fine'
+#dataset_title = 'channel5200'
+#dataset_title = 'isotropic1024coarse'
 output_path = './giverny_output'
-save_img_dir = './training_slices'
+save_img_dir = './different_databases/training_slices_isotropic1024fine'
 variable = 'velocity'
-spatial_method = 'lag6'
-temporal_method = 'none'
+spatial_method = 'lag4'
+temporal_method = 'none' # 'none' or 'pchip'
 spatial_operator = 'field'
 
 # Create folder to save training data images
@@ -22,13 +24,13 @@ dataset = turb_dataset(dataset_title=dataset_title, output_path=output_path, aut
 
 # === Generate 2D u-velocity slices over time ===
 nx = ny = 256
-x_points = np.linspace(0.0, 2 * np.pi, nx)
-y_points = np.linspace(0.0, 2 * np.pi, ny)
-z = np.pi  # midplane at z = π
+x_points = np.linspace(0, 8*np.pi , nx)
+y_points = np.linspace(-1, 1, ny)
+z = 1.5*np.pi # midplane at z = π
 
-T_start = 0.0
-T_end = 10.0
-T_delta = 0.005
+T_start = 0
+T_end = 7
+T_delta = 0.001
 T_list = np.arange(T_start, T_end + T_delta, T_delta)
 
 for t in T_list:
