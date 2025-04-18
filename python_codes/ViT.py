@@ -1,6 +1,4 @@
-# === ViT Forecasting of Turbulent Flow 0.2s Ahead ===
-# Run with:
-# "C:/Users/Javad Mortazavian/anaconda3/envs/torch_gpu/python.exe" "c:/Users/Javad Mortazavian/Documents/GitHub/cis694_turbulence/vit_forecast_next0.2s.py"
+# === ViT Forecaster with Static Spatial Embedding and Temporal Attention ===
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,7 +9,7 @@ from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 import os
 import glob
-import timm  # Vision Transformer models
+import timm
 
 # === DEVICE SETUP ===
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -20,32 +18,35 @@ if torch.cuda.is_available():
     print("GPU:", torch.cuda.get_device_name(0))
 
 # === PARAMETERS ===
-save_img_dir = './training_slices'
-img_size = 128
-seq_len = 3
-forecast_gap = 50  # 0.2s ahead, since dt = 0.01s
+train_dir = './training_slices'
+test_dir = './testing_slices'
+img_size = 256
+seq_len = 5
+forecast_gap = 5
+rollout_steps = 2
 batch_size = 2
 epochs = 30
 
-# === Load Data from PNGs ===
-img_paths = sorted(glob.glob(os.path.join(save_img_dir, 'slice_t*.png')))
-slices = []
+# === Load Slices from Folder ===
+def load_slices_from_folder(folder):
+    paths = sorted(glob.glob(os.path.join(folder, 'slice_t*.png')))
+    images = []
+    for path in paths:
+        img = Image.open(path).convert('L')
+        img = np.array(img).astype(np.float32) / 255.0
+        img = (img - 0.5) * 6.0
+        images.append(img)
+    return np.array(images)
 
-for img_path in img_paths:
-    img = Image.open(img_path).convert('L')  # grayscale
-    img = np.array(img).astype(np.float32) / 255.0
-    img = (img - 0.5) * 6.0  # scale to [-3, 3]
-    slices.append(img)
+train_slices = load_slices_from_folder(train_dir)
+test_slices = load_slices_from_folder(test_dir)
+print("Train shape:", train_slices.shape, "Test shape:", test_slices.shape)
 
-slices = np.array(slices)
-print("Loaded shape:", slices.shape)
+mean = train_slices.mean()
+std = train_slices.std()
+train_slices = (train_slices - mean) / std
+test_slices = (test_slices - mean) / std
 
-# === Normalize ===
-mean = slices.mean()
-std = slices.std()
-slices = (slices - mean) / std
-
-# === Dataset Class ===
 class TurbulenceForecastDataset(Dataset):
     def __init__(self, data, seq_len, forecast_gap):
         self.data = data
@@ -53,22 +54,27 @@ class TurbulenceForecastDataset(Dataset):
         self.forecast_gap = forecast_gap
 
     def __len__(self):
-        return len(self.data) - self.seq_len - self.forecast_gap
+        return len(self.data) - self.seq_len - forecast_gap * rollout_steps
 
     def __getitem__(self, idx):
-        input_seq = self.data[idx : idx + self.seq_len]  # (seq_len, H, W)
-        target = self.data[idx + self.seq_len + self.forecast_gap - 1]
-        return torch.tensor(input_seq, dtype=torch.float32), torch.tensor(target, dtype=torch.float32)
+        input_seq = self.data[idx : idx + self.seq_len]  # [T, H, W]
+        target_seq = [
+            self.data[idx + self.seq_len + i * self.forecast_gap - 1] for i in range(rollout_steps)
+        ]
+        return (
+            torch.tensor(input_seq, dtype=torch.float32),
+            torch.tensor(np.stack(target_seq), dtype=torch.float32)
+        )
 
-dataset = TurbulenceForecastDataset(slices, seq_len=seq_len, forecast_gap=forecast_gap)
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+train_dataset = TurbulenceForecastDataset(train_slices, seq_len, forecast_gap)
+test_dataset = TurbulenceForecastDataset(test_slices, seq_len, forecast_gap)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
-# === Vision Transformer Model ===
+# === ViT Model ===
 class ViTForecaster(nn.Module):
-    def __init__(self, seq_len, img_size=256, patch_size=16, emb_dim=768):
+    def __init__(self, seq_len, img_size=256):
         super().__init__()
-        self.seq_len = seq_len
-        self.img_size = img_size
         self.vit = timm.create_model(
             'vit_base_patch16_224',
             pretrained=False,
@@ -78,13 +84,9 @@ class ViTForecaster(nn.Module):
         )
 
     def forward(self, x):
-        # x: (B, T, H, W) → ViT expects (B, C, H, W), here C = seq_len
-        x = x.to(device)
-        x = self.vit(x)  # output shape: (B, H*W)
-        x = x.view(-1, self.img_size, self.img_size)
-        return x
+        x = self.vit(x)
+        return x.view(-1, 1, img_size, img_size)
 
-# === Model, Optimizer, Loss ===
 model = ViTForecaster(seq_len=seq_len, img_size=img_size).to(device)
 optimizer = optim.Adam(model.parameters(), lr=1e-4)
 criterion = nn.MSELoss()
@@ -93,29 +95,32 @@ criterion = nn.MSELoss()
 model.train()
 for epoch in range(epochs):
     total_loss = 0
-    for inputs, targets in dataloader:
-        inputs = inputs.to(device)       # (B, T, H, W)
-        targets = targets.to(device)     # (B, H, W)
-        optimizer.zero_grad()
+    for inputs, targets in train_loader:
+        inputs = inputs.to(device)  # (B, T, H, W)
+        targets = targets[:, -1].unsqueeze(1).to(device)  # last rollout target (B, 1, H, W)
         preds = model(inputs)
         loss = criterion(preds, targets)
+        optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
-    print(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss / len(dataloader):.6f}")
+    print(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss / len(train_loader):.6f}")
 
-# === Visual Comparison ===
+# === Evaluation ===
 model.eval()
 with torch.no_grad():
-    sample_input, sample_target = dataset[0]
-    sample_input = sample_input.unsqueeze(0).to(device)
-    prediction = model(sample_input).squeeze(0).cpu()
-    sample_target = sample_target.cpu()
-    sample_input = sample_input.cpu()
+    input_seq, target_seq = test_dataset[0]
+    input_seq = input_seq.unsqueeze(0).to(device)
+    target = target_seq[-1].unsqueeze(0).unsqueeze(0).to(device)
+    pred = model(input_seq)
+
+prediction = pred.squeeze().cpu()
+sample_target = target.squeeze().cpu()
+sample_input = input_seq.squeeze(0).cpu()
 
 plt.figure(figsize=(12, 4))
 plt.subplot(1, 3, 1)
-plt.imshow(sample_input[0, -1], cmap='seismic', vmin=-3, vmax=3)
+plt.imshow(sample_input[-1], cmap='seismic', vmin=-3, vmax=3)
 plt.title("Input (last frame)")
 plt.colorbar()
 
@@ -126,4 +131,8 @@ plt.colorbar()
 
 plt.subplot(1, 3, 3)
 plt.imshow(prediction, cmap='seismic', vmin=-3, vmax=3)
-plt
+plt.title("Predicted Frame")
+plt.colorbar()
+
+plt.tight_layout()
+plt.show()
