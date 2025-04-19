@@ -28,7 +28,7 @@ def conv_relu2x_blk(in_chan, out_chan):
     )
 
 
-class StdUnet(torch.nn.Module):
+class BaseSRNet(torch.nn.Module):
     def __init__(self):
         super().__init__()
         # Stages in contracting path
@@ -51,6 +51,7 @@ class StdUnet(torch.nn.Module):
         self.convu4 = conv_relu2x_blk(2 * 4, 4)
         self.convu5 = conv_relu2x_blk(4, 4)
         self.convu6 = conv_relu2x_blk(4, 4)
+        self.final = torch.nn.Conv2d(4, 4, 3, 1, 1)
 
 
     def forward(self, x):
@@ -79,7 +80,8 @@ class StdUnet(torch.nn.Module):
         h10 = self.convu5(h9u)
         h10u = self.upscale6(h10)
         h11 = self.convu6(h10u)
-        return h11
+        h12 = self.final(h11)
+        return h12
 
 
 class SuperResTransform:
@@ -120,6 +122,17 @@ class SuperResDataset(Dataset):
         return img_orig, img1
 
 
+def initialize_weights(module):
+    if isinstance(module, torch.nn.Conv2d):
+        torch.nn.init.normal_(module.weight, mean=0.025, std=0.01)
+        if module.bias is not None:
+            torch.nn.init.constant_(module.bias, 0.0)
+    elif isinstance(module, torch.nn.ConvTranspose2d):
+        torch.nn.init.normal_(module.weight, mean=0.025, std=0.01)
+        if module.bias is not None:
+            torch.nn.init.constant_(module.bias, 0.0)
+
+
 def main():
     imagepath = '../Isotropic turbulence/training_slices/'
     #
@@ -155,12 +168,12 @@ def main():
         plt.imshow(image_orig.squeeze())
 
     #
-    # Test encoder
+    # Test complete network
     #
-    encoder_decoder = StdUnet()
-    encoder_decoder.eval()
-    images_decode = encoder_decoder(images_scaled)
-    print(f"images_decode size: {images_decode.shape}")
+    down_net = BaseSRNet()
+    down_net.eval()
+    images_decode = down_net(images_scaled)
+    print(f"images_decode shape: {images_decode.shape}")
 
     # Display all plots
     plt.show()
