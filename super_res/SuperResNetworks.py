@@ -85,10 +85,33 @@ class BaseSRNet(torch.nn.Module):
 
 
 class SuperResTransform:
+    # Transform applied to get reduced size image from original
     def __init__(self, size):
         self.transform = v2.Compose([
             v2.Resize((size, size))
         ])
+
+
+class SRCNNmod(torch.nn.Module):
+    def __init__(self, n0, f1, n1, f2, n2, f3):
+        super(SRCNNmod, self).__init__()
+        self.upscale = torch.nn.Upsample(scale_factor=4, mode='bicubic', align_corners=False)
+        self.conv1 = torch.nn.Conv2d(n0, n1, f1, 1, (f1 - 1) // 2)
+        self.relu1 = torch.nn.ReLU()
+        self.conv2 = torch.nn.Conv2d(n1, n2, f2, 1, (f2 - 1) // 2)
+        self.relu2 = torch.nn.ReLU()
+        self.conv3 = torch.nn.Conv2d(n2, n0, f3, 1, (f3 - 1) // 2)
+
+    def forward(self, x):
+        xu = self.upscale(x)
+        h1 = self.conv1(xu)
+        h1r = self.relu1(h1)
+        h2 = self.conv2(h1r)
+        h2r = self.relu2(h2)
+        h3 = self.conv3(h2r)
+        # print(f"xu.shape: {tuple(xu.size())}, h1r.shape: {tuple(h1r.size())}, "
+              # f"h2r.shape: {tuple(h2r.size())}, h3.shape: {tuple(h3.size())}")
+        return h3
 
 
 class SuperResDataset(Dataset):
@@ -123,14 +146,11 @@ class SuperResDataset(Dataset):
 
 
 def initialize_weights(module):
-    if isinstance(module, torch.nn.Conv2d):
-        torch.nn.init.normal_(module.weight, mean=0.025, std=0.01)
+    if isinstance(module, torch.nn.Conv2d) or isinstance(module, torch.nn.ConvTranspose2d):
+        torch.nn.init.xavier_normal_(module.weight)  # Normal distribution
+        # torch.nn.init.kaiming_normal_(module.weight)  # Normal distribution
         if module.bias is not None:
-            torch.nn.init.constant_(module.bias, 0.0)
-    elif isinstance(module, torch.nn.ConvTranspose2d):
-        torch.nn.init.normal_(module.weight, mean=0.025, std=0.01)
-        if module.bias is not None:
-            torch.nn.init.constant_(module.bias, 0.0)
+            torch.nn.init.constant_(module.bias, 0.01)
 
 
 def main():
@@ -142,11 +162,15 @@ def main():
     dataset = SuperResDataset(imagepath, transform1=transform1)
     print(f"There are {len(dataset)} images in {imagepath}")
     image_orig, image_scaled = dataset[0]
-    fig1, (ax1a, ax1b) = plt.subplots(1, 2)
+    image_upscaled = torch.nn.functional.interpolate(image_scaled.unsqueeze(0), scale_factor=4,
+                                                     mode='bicubic', align_corners=False)
+    fig1, (ax1a, ax1b, ax1c) = plt.subplots(1, 3)
     im1 = ax1a.imshow(image_orig.permute(1, 2, 0).squeeze())
     ax1a.set_title('Original')
     ax1b.imshow(image_scaled.permute(1, 2, 0).squeeze())
     ax1b.set_title('Downsampled by 4x')
+    ax1c.imshow(image_upscaled.squeeze().permute(1, 2, 0))
+    ax1c.set_title('Upscaled by 4x from Downscaled Image')
 
     #
     # Test use of dataloader
@@ -168,12 +192,20 @@ def main():
         plt.imshow(image_orig.squeeze())
 
     #
-    # Test complete network
+    # Test BaseSRNet
     #
     down_net = BaseSRNet()
     down_net.eval()
     images_decode = down_net(images_scaled)
     print(f"images_decode shape: {images_decode.shape}")
+
+    #
+    # Test SRCNNmod
+    #
+    srcnn_net = SRCNNmod(n0=4, f1=9, n1=64, f2=1, n2=32, f3=5)
+    srcnn_net.eval()
+    images_decode2 = srcnn_net(images_scaled)
+    print(f"images_decode2 shape: {images_decode2.shape}")
 
     # Display all plots
     plt.show()
