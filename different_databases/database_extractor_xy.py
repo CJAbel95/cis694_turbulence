@@ -13,7 +13,7 @@ output_path = './giverny_output'
 save_img_dir = './different_databases/training_slices_isotropic1024coarse'
 variable = 'velocity'
 spatial_method = 'none'
-temporal_method = 'none' # 'none' or 'pchip'
+temporal_method = 'pchip' # 'none' or 'pchip'
 spatial_operator = 'field'
 
 # Create folder to save training data images
@@ -30,7 +30,7 @@ z = np.pi # midplane at z = π
 
 T_start = 0
 T_end = 10
-T_delta = 0.01
+T_delta = 0.002
 T_list = np.arange(T_start, T_end + T_delta, T_delta)
 
 for t in T_list:

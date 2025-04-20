@@ -6,11 +6,11 @@ from givernylocal.turbulence_toolkit import getData
 
 # === PARAMETERS ===
 auth_token = 'edu.csuohio.vikes.s.mortazaviannajafabadi-38a671ff'
-dataset_title = 'transition_bl' # 'transition_to_turbulence', 'channel5200', 'isotropic1024coarse', 'isotropic1024fine'
+#dataset_title = 'transition_bl' # 'transition_to_turbulence', 'channel5200', 'isotropic1024coarse', 'isotropic1024fine'
 #dataset_title = 'channel5200'
-#dataset_title = 'isotropic1024coarse'
+dataset_title = 'isotropic1024coarse'
 output_path = './giverny_output'
-save_img_dir = './different_databases/training_slices_transition_bl'
+save_img_dir = './different_databases/training_slices_isotropic1024coarse'
 variable = 'velocity'
 spatial_method = 'lag4'
 temporal_method = 'none' # 'none' or 'pchip'
@@ -30,7 +30,7 @@ z_points = np.linspace(0, 240, nz)
 
 T_start = 0
 T_end = 7
-T_delta = 0.001
+T_delta = 0.005
 T_list = np.arange(T_start, T_end + T_delta, T_delta)
 
 for t in T_list:
