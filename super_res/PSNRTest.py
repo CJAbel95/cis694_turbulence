@@ -1,9 +1,11 @@
 #
-# Filename: SRCNNTest.py
+# Filename: PSNRTest.py
 #
 # Description: Program that uses the classes in SuperResNetworks.py to
 #           instantiate and test an SRCNN-style network for super resolution
-#           of 32x32 images uf ux up to 128x128.
+#           of 32x32 images uf ux up to 128x128.  This program calculates the PSNR
+#           (peak SNR) metric between the original ground-truth image (128 x 128) and the upscaled
+#           image from the 32 x 32 image.
 #
 # by Christopher J. Abel
 #
@@ -25,6 +27,16 @@ from PIL import Image
 import matplotlib.pyplot as plt
 
 
+def PSNRCalc(image_orig, image_sr):
+    # Assumes images are PyTorch tensors scaled to a range of [0 : 1]
+    #
+    # N = total number of pixels
+    N = image_orig.numel()
+    mse = torch.mean((image_orig.float() - image_sr.float()) ** 2).item()
+    psnr = 10 * math.log10(1 / mse)
+    return psnr
+
+
 def main():
     batch_size = 4
     variable = 'ux'
@@ -36,7 +48,7 @@ def main():
     transform1 = SuperResNetworks.SuperResTransform(32).transform
     dataset = SuperResNetworks.SuperResDataset(imagepath, transform1=transform1)
     print(f"There are {len(dataset)} images in {imagepath}")
-    dataloader1 = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    dataloader1 = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     images_orig, images_scaled = next(iter(dataloader1))
     sr_net = SuperResNetworks.SRCNNmod(n0=4, f1=9, n1=64, f2=1, n2=32, f3=5)
     print(f"Loading previous parameter set: {parameter_file}")
@@ -45,24 +57,18 @@ def main():
 
     # Process images through sr_net
     images_decode = sr_net(images_scaled)
-    figure1 = plt.figure()
-    for i in range(0, 4):
-        # Use numpy clip function to eliminate warning about values slightly
-        # outside range ([0, 1]).  This is for Matplotlib image display only.
-        image_orig = np.clip(images_orig[i].permute(1, 2, 0), 0, 1)
-        image1 = np.clip(images_scaled[i].permute(1, 2, 0), 0, 1)
-        # print(f"Decoded tensor: max = {torch.max(images_decode[i])}, min = {torch.min(images_decode[i])}, avg = {torch.mean(images_decode[i])}")
-        image_decode = np.clip(images_decode[i].permute(1, 2, 0).detach().numpy(), 0, 1)
-        print(f"image_decode mean = {np.mean(image_decode)}, max = {np.max(image_decode)}, min = {np.min(image_decode)}")
-        figure1.add_subplot(3, 4, i + 1)
-        plt.imshow(image_orig.squeeze())
-        figure1.add_subplot(3, 4, i + 5)
-        plt.imshow(image1.squeeze())
-        figure1.add_subplot(3, 4, i + 9)
-        plt.imshow(image_decode.squeeze())
+    images_decode = images_decode.detach()
 
-    # Display all Matplotlib figures
-    plt.show()
+    # Compare shapes and printout a small number of pixels for the batch
+    # of original images and the batch of super-resolved images.
+    print(f"Shape of images_orig = {images_orig.shape}")
+    print(f"Shape of images_decode = {images_decode.shape}")
+    print(images_orig[0, 1, 50 : 52, 50 : 52])
+    print(images_decode[0, 1, 50: 52, 50: 52])
+
+    # Calculate PSNR for image 0
+    psnr = PSNRCalc(images_orig[0], images_decode[0])
+    print(f"PSNR for image 0 = {psnr : .2f} dB")
 
 
 if __name__ == '__main__':
