@@ -222,7 +222,7 @@ class CostMemoryDecoderWithSkip(nn.Module):
 class FlowFormerForecastModel(nn.Module):
     def __init__(self, encoder_dim=256, hidden_dim=256, out_channels=3):
         super().__init__()
-        self.encoder = MiniFlowFormerEncoder(in_channels=3, embed_dim=encoder_dim)
+        self.encoder = FluidFlowFormerEncoder(in_channels=3, embed_dim=encoder_dim)
         self.decoder = CostMemoryDecoderWithSkip(hidden_dim=hidden_dim, out_channels=out_channels)
 
     def forward(self, x):  # x: [B, T, C, H, W]
