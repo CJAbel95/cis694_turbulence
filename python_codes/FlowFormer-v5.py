@@ -20,30 +20,39 @@ print(f"Using device: {device}")
 if torch.cuda.is_available():
     print("GPU:", torch.cuda.get_device_name(0))
 
-# === Dataset ===
+# === Dataset Class for Turbulence Forecasting ===
 class TurbulenceForecastDataset(Dataset):
-    def __init__(self, folder, seq_len=5, gap=20, size=256):
-        self.paths = sorted(glob.glob(os.path.join(folder, '*.png')))
-        self.seq_len = seq_len
-        self.gap = gap
-        self.size = size
+    def __init__(self, folder, seq_len=10, gap=100, size=256):  
+        # Initialize dataset with image folder path, sequence length, frame gap, and image size
+        self.paths = sorted(glob.glob(os.path.join(folder, '*.png')))  # Get sorted list of image paths
+        self.seq_len = seq_len  # Number of input images in the sequence
+        self.gap = gap          # Number of frames between input sequence and target frame
+        self.size = size        # Resize images to (size, size)
 
     def __len__(self):
+        # Total number of samples: exclude the last few frames that can't form a full input+target
         return len(self.paths) - self.seq_len - self.gap
 
     def __getitem__(self, idx):
-        input_imgs = []
+        input_imgs = []  # List to hold input sequence of images
+
+        # Loop over the sequence length to load input images
         for i in range(self.seq_len):
+            # Open and process each image in the input sequence
             img = Image.open(self.paths[idx + i]).convert('RGB').resize((self.size, self.size))
-            img = np.array(img).astype(np.float32) / 255.0
-            input_imgs.append(img.transpose(2, 0, 1))
+            img = np.array(img).astype(np.float32) / 255.0             # Normalize pixel values to [0, 1]
+            input_imgs.append(img.transpose(2, 0, 1))                  # Change to (C, H, W) format for PyTorch
+
+        # Load the target image (future frame) after a gap
         target_img = Image.open(self.paths[idx + self.seq_len + self.gap - 1]).convert('RGB').resize((self.size, self.size))
-        target_img = np.array(target_img).astype(np.float32) / 255.0
-        target_img = target_img.transpose(2, 0, 1)
+        target_img = np.array(target_img).astype(np.float32) / 255.0   # Normalize
+        target_img = target_img.transpose(2, 0, 1)                     # Change to (C, H, W)
+
+        # Return tensors of the input image sequence and the target image
         return torch.tensor(np.stack(input_imgs)), torch.tensor(target_img)
 
 # === Encoder ===
-class MiniFlowFormerEncoder(nn.Module):
+class FluidFlowFormerEncoder(nn.Module):
     def __init__(self, in_channels=3, embed_dim=256):
         super().__init__()
         self.conv1 = nn.Sequential(
@@ -281,7 +290,7 @@ img_size = 256
 seq_len = 10
 forecast_gap = 100 # 0.2s
 batch_size = 6
-epochs = 100
+epochs = 30
 lr = 5e-4
 
 # === Data ===
