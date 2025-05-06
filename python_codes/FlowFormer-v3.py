@@ -241,11 +241,11 @@ class PerceptualL1Loss(nn.Module):
 train_dir = './training_slices'
 test_dir = './testing_slices'
 img_size = 256
-seq_len = 5
-forecast_gap = 20
-batch_size = 4
+seq_len = 10
+forecast_gap = 50 # 0.2s
+batch_size = 6
 epochs = 20
-lr = 1e-4
+lr = 10e-4
 
 # === Data ===
 train_dataset = TurbulenceForecastDataset(train_dir, seq_len=seq_len, gap=forecast_gap, size=img_size)
