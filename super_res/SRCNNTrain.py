@@ -30,12 +30,13 @@ import matplotlib.pyplot as plt
 def main():
     variable = 'ux'
     plot_loss = True
-    num_epochs = 1000
+    num_epochs = 20
     batch_size = 4
     learning_rate = 5e-4
     # imagepath = '../Isotropic turbulence/training_slices/'
     imagepath = '../../TrainingSets/' + variable + '/'
     parameter_file = "sr_net.pth"
+    parameter_best_file = "sr_net_best.pth"
     loss_csv_file = "loss_v_epoch.csv"
     restart = True
     use_cpu = False
@@ -48,13 +49,19 @@ def main():
     print(f"Using device: {device}")
 
     # Setup transform, dataset, dataloader, and encoder-decoder network
-    transform1 = SuperResNetworks.SuperResTransform(32).transform
-    dataset = SuperResNetworks.SuperResDataset(imagepath, transform1=transform1)
+    transform0 = SuperResNetworks.AugmentTransform().transform
+    transform1 = SuperResNetworks.ResizeTransform(32).transform
+    # transform1 = SuperResNetworks.ResizeFiltTransform(32).transform
+    dataset = SuperResNetworks.SuperResDataset(imagepath, transform_orig=transform0, transform1=transform1, remove_alpha=False)
     print(f"There are {len(dataset)} images in {imagepath}")
-    dataloader1 = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    dataloader1 = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     # Move CNN to CUDA, if available, otherwise CPU
     sr_net = SuperResNetworks.SRCNNmod(n0=4, f1=9, n1=64, f2=1, n2=32, f3=5).to(device)
+    # sr_net = SuperResNetworks.SRCNNmodBn(n0=4, f1=9, n1=64, f2=5, n2=32, f3=5).to(device)
+    # sr_net = SuperResNetworks.SRCNNmod2(n0=4, f0=3, f1=9, n1=64, f2=1, n2=32, f3=5).to(device)
+    # sr_net = SuperResNetworks.SRCNNmodRl(n0=4, f1=9, n1=64, f2=1, n2=32, f3=5).to(device)
+    print(f"\nsr_net running on: {next(sr_net.parameters()).device}\n")
 
     if os.path.exists(parameter_file) and not restart:
         print(f"Loading previous parameter set: {parameter_file}")
@@ -73,20 +80,30 @@ def main():
     #
     # Training loop
     #
+    best_loss = 10.0
     loss_v_epoch = []
     t_start = time.time()  # Capture wall clock time at start of training
     for epoch in range(0, num_epochs):
+        epoch_loss = 0.0
         for batch_idx, (img_orig, img) in enumerate(dataloader1):
             img_orig, img = img_orig.to(device), img.to(device)
             img_out = sr_net(img)
             loss = loss_function(img_orig, img_out)
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            optimizer.zero_grad()
+            # optimizer.zero_grad()
+            epoch_loss += loss.item()
 
         # Print Epoch # and loss for every 10 epochs
-        loss_v_epoch.append([epoch, loss.item()])
-        if (epoch % 10 == 0): print(f"Epoch: {epoch} \tLoss = {loss.item()}")
+        # If epoch loss reaches a new local minimum, save "best"
+        # parameter set.
+        epoch_loss = epoch_loss / len(dataloader1)
+        if epoch_loss < best_loss:
+            best_loss = epoch_loss
+            torch.save(sr_net.state_dict(), parameter_best_file)
+        loss_v_epoch.append([epoch, epoch_loss])
+        if (epoch % 4 == 0): print(f"Epoch: {epoch} \tLoss = {loss.item()}")
 
     # Save loss vs epoch to .csv file
     df1 = pd.DataFrame(loss_v_epoch, columns=['Epoch', 'Loss'])

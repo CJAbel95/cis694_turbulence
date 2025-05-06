@@ -33,12 +33,15 @@ def main():
     parameter_file = "sr_net.pth"
 
     # Setup transform, dataset, dataloader, and encoder-decoder network
-    transform1 = SuperResNetworks.SuperResTransform(32).transform
-    dataset = SuperResNetworks.SuperResDataset(imagepath, transform1=transform1)
+    transform1 = SuperResNetworks.ResizeTransform(32).transform
+    dataset = SuperResNetworks.SuperResDataset(imagepath, transform1=transform1, remove_alpha=False)
     print(f"There are {len(dataset)} images in {imagepath}")
     dataloader1 = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     images_orig, images_scaled = next(iter(dataloader1))
     sr_net = SuperResNetworks.SRCNNmod(n0=4, f1=9, n1=64, f2=1, n2=32, f3=5)
+    # sr_net = SuperResNetworks.SRCNNmodBn(n0=4, f1=9, n1=64, f2=5, n2=32, f3=5)
+    # sr_net = SuperResNetworks.SRCNNmod2(n0=4, f0=3, f1=9, n1=64, f2=1, n2=32, f3=5)
+    # sr_net = SuperResNetworks.SRCNNmodRl(n0=4, f1=9, n1=64, f2=1, n2=32, f3=5)
     print(f"Loading previous parameter set: {parameter_file}")
     sr_net.load_state_dict(torch.load(parameter_file))
     sr_net.eval()
@@ -60,6 +63,18 @@ def main():
         plt.imshow(image1.squeeze())
         figure1.add_subplot(3, 4, i + 9)
         plt.imshow(image_decode.squeeze())
+
+    # Plot image 0 in a 1 x 3 row of images
+    figure2 = plt.figure()
+    image_orig = np.clip(images_orig[0].permute(1, 2, 0), 0, 1)
+    image1 = np.clip(images_scaled[0].permute(1, 2, 0), 0, 1)
+    image_decode = np.clip(images_decode[0].permute(1, 2, 0).detach().numpy(), 0, 1)
+    figure2.add_subplot(1, 3, 1)
+    plt.imshow(image_orig.squeeze())
+    figure2.add_subplot(1, 3, 2)
+    plt.imshow(image1.squeeze())
+    figure2.add_subplot(1, 3, 3)
+    plt.imshow(image_decode.squeeze())
 
     # Display all Matplotlib figures
     plt.show()

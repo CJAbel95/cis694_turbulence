@@ -12,7 +12,7 @@
 import os
 import numpy as np
 import torch
-from torchvision.transforms import ToTensor, v2
+from torchvision.transforms import ToTensor, v2, InterpolationMode, functional
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 from PIL import Image
@@ -84,15 +84,40 @@ class BaseSRNet(torch.nn.Module):
         return h12
 
 
-class SuperResTransform:
-    # Transform applied to get reduced size image from original
+class ResizeTransform:
+    # Transform applied to get reduced size image from original.
+    def __init__(self, size):
+        self.transform = v2.Compose([
+            v2.Resize((size, size), interpolation=InterpolationMode.NEAREST)
+        ])
+
+
+class ResizeFiltTransform:
+    # Transform applied to get reduced size image from original.
     def __init__(self, size):
         self.transform = v2.Compose([
             v2.Resize((size, size))
         ])
 
 
+class AugmentTransform:
+    # Transform applied to randomly flip or rotate image
+    def __init__(self):
+        self.transform = v2.Compose([
+            v2.RandomHorizontalFlip(p=0.5),
+            v2.RandomVerticalFlip(p=0.5),
+            v2.RandomChoice([
+                v2.Lambda(lambda img: functional.rotate(img, 0)),
+                v2.Lambda(lambda img: functional.rotate(img, 90)),
+                v2.Lambda(lambda img: functional.rotate(img, 180)),
+                v2.Lambda(lambda img: functional.rotate(img, 270))
+            ])
+        ])
+
+
 class SRCNNmod(torch.nn.Module):
+    #
+    # Modified SRCNN model; upsample with bicubic interpolation. No Batch normalization.
     def __init__(self, n0, f1, n1, f2, n2, f3):
         super(SRCNNmod, self).__init__()
         self.upscale = torch.nn.Upsample(scale_factor=4, mode='bicubic', align_corners=False)
@@ -109,20 +134,155 @@ class SRCNNmod(torch.nn.Module):
         h2 = self.conv2(h1r)
         h2r = self.relu2(h2)
         h3 = self.conv3(h2r)
-        # print(f"xu.shape: {tuple(xu.size())}, h1r.shape: {tuple(h1r.size())}, "
-              # f"h2r.shape: {tuple(h2r.size())}, h3.shape: {tuple(h3.size())}")
+        return h3
+
+
+class SRCNNmodBn(torch.nn.Module):
+    #
+    # Modified SRCNN model; upsample with bicubic interpolation. Includes batch
+    # normalization stages.
+    def __init__(self, n0, f1, n1, f2, n2, f3):
+        super(SRCNNmodBn, self).__init__()
+        self.upscale = torch.nn.Upsample(scale_factor=4, mode='bicubic', align_corners=False)
+        self.conv1 = torch.nn.Conv2d(n0, n1, f1, 1, (f1 - 1) // 2)
+        self.bn1 = torch.nn.BatchNorm2d(n1)
+        self.relu1 = torch.nn.ReLU()
+        self.conv2 = torch.nn.Conv2d(n1, n2, f2, 1, (f2 - 1) // 2)
+        self.bn2 = torch.nn.BatchNorm2d(n2)
+        self.relu2 = torch.nn.ReLU()
+        self.conv3 = torch.nn.Conv2d(n2, n0, f3, 1, (f3 - 1) // 2)
+
+    def forward(self, x):
+        xu = self.upscale(x)
+        h1 = self.conv1(xu)
+        h1b = self.bn1(h1)
+        h1r = self.relu1(h1b)
+        h2 = self.conv2(h1r)
+        h2b = self.bn2(h2)
+        h2r = self.relu2(h2b)
+        h3 = self.conv3(h2r)
+        return h3
+
+
+class SRCNNmodRl(torch.nn.Module):
+    #
+    # Modified SRCNN model; upsample with bicubic interpolation. No Batch normalization.
+    def __init__(self, n0, f1, n1, f2, n2, f3):
+        super(SRCNNmodRl, self).__init__()
+        self.upscale = torch.nn.Upsample(scale_factor=4, mode='bicubic', align_corners=False)
+        self.conv1 = torch.nn.Conv2d(n0, n1, f1, 1, (f1 - 1) // 2)
+        self.relu1 = torch.nn.ReLU()
+        self.conv2 = torch.nn.Conv2d(n1, n2, f2, 1, (f2 - 1) // 2)
+        self.relu2 = torch.nn.ReLU()
+        self.conv3 = torch.nn.Conv2d(n2, n0, f3, 1, (f3 - 1) // 2)
+
+    def forward(self, x):
+        xu = self.upscale(x)
+        h1 = self.conv1(xu)
+        h1r = self.relu1(h1)
+        h2 = self.conv2(h1r)
+        h2r = self.relu2(h2)
+        h3 = self.conv3(h2r)
+        return h3 + xu
+
+
+class SRCNNmod2(torch.nn.Module):
+    #
+    # Modified SRCNN model; upsample using ConvTranspose2d
+    def __init__(self, n0, f0, f1, n1, f2, n2, f3):
+        super(SRCNNmod2, self).__init__()
+        self.upscale = torch.nn.ConvTranspose2d(n0, n0, 4, 4, 0, 0)
+        self.conv0 = torch.nn.Conv2d(n0, n0, f0, 1, (f0 - 1) // 2)
+        self.relu0 = torch.nn.ReLU()
+        self.conv1 = torch.nn.Conv2d(n0, n1, f1, 1, (f1 - 1) // 2)
+        self.bn1 = torch.nn.BatchNorm2d(n1)
+        self.relu1 = torch.nn.ReLU()
+        self.conv2 = torch.nn.Conv2d(n1, n2, f2, 1, (f2 - 1) // 2)
+        self.bn2 = torch.nn.BatchNorm2d(n2)
+        self.relu2 = torch.nn.ReLU()
+        self.conv3 = torch.nn.Conv2d(n2, n0, f3, 1, (f3 - 1) // 2)
+
+    def forward(self, x):
+        xu = self.upscale(x)
+        h0 = self.conv0(xu)
+        h0r = self.relu0(h0)
+        h1 = self.conv1(h0r)
+        h1b = self.bn1(h1)
+        h1r = self.relu1(h1b)
+        h2 = self.conv2(h1r)
+        h2b = self.bn2(h2)
+        h2r = self.relu2(h2b)
+        h3 = self.conv3(h2r)
+        return h3
+
+
+class TwoBrSR(torch.nn.Module):
+    #
+    #   SRCNN model with two input branches.  Branch 1 is the image to be super-resolved,
+    #   (e.g. ux) while branch 2 is a related image (e.g. p), captured at the same time
+    #   point.
+    #
+    #   Upsample with bicubic interpolation. No Batch normalization.
+    def __init__(self, n0, f1, n1, f2, n2, f3):
+        super(TwoBrSR, self).__init__()
+        self.upscale = torch.nn.Upsample(scale_factor=4, mode='bicubic', align_corners=False)
+        self.conv1 = torch.nn.Conv2d(2 * n0, n1, f1, 1, (f1 - 1) // 2)
+        self.relu1 = torch.nn.ReLU()
+        self.conv2 = torch.nn.Conv2d(n1, n2, f2, 1, (f2 - 1) // 2)
+        self.relu2 = torch.nn.ReLU()
+        self.conv3 = torch.nn.Conv2d(n2, n0, f3, 1, (f3 - 1) // 2)
+
+    def forward(self, x, y):
+        xu = self.upscale(x)
+        yu = self.upscale(y)
+        xy_cat = torch.cat((xu, yu), dim=1)
+        h1 = self.conv1(xy_cat)
+        h1r = self.relu1(h1)
+        h2 = self.conv2(h1r)
+        h2r = self.relu2(h2)
+        h3 = self.conv3(h2r)
+        return h3
+
+
+class ThreeBrSR(torch.nn.Module):
+    #
+    #   SRCNN model with three input branches.  Branch 1 is the image to be super-resolved,
+    #   (e.g. ux) while branches 2 and 3 are related images (e.g. dp/dx and dp/dy),
+    #   captured at the same time point.
+    #
+    #   Upsample with bicubic interpolation. No Batch normalization.
+    def __init__(self, n0, f1, n1, f2, n2, f3):
+        super(ThreeBrSR, self).__init__()
+        self.upscale = torch.nn.Upsample(scale_factor=4, mode='bicubic', align_corners=False)
+        self.conv1 = torch.nn.Conv2d(3 * n0, n1, f1, 1, (f1 - 1) // 2)
+        self.relu1 = torch.nn.ReLU()
+        self.conv2 = torch.nn.Conv2d(n1, n2, f2, 1, (f2 - 1) // 2)
+        self.relu2 = torch.nn.ReLU()
+        self.conv3 = torch.nn.Conv2d(n2, n0, f3, 1, (f3 - 1) // 2)
+
+    def forward(self, x, y1, y2):
+        xu = self.upscale(x)
+        y1u = self.upscale(y1)
+        y2u = self.upscale(y2)
+        xy_cat = torch.cat((xu, y1u, y2u), dim=1)
+        h1 = self.conv1(xy_cat)
+        h1r = self.relu1(h1)
+        h2 = self.conv2(h1r)
+        h2r = self.relu2(h2)
+        h3 = self.conv3(h2r)
         return h3
 
 
 class SuperResDataset(Dataset):
     def __init__(self, img_dir, transform_orig=None,
-                 transform1=None, target_transform=None):
+                 transform1=None, target_transform=None, remove_alpha=True):
         self.img_dir = img_dir
         self.img_files = [f for f in os.listdir(self.img_dir) if
                           os.path.isfile(os.path.join(self.img_dir, f)) and f.endswith('.png')]
         self.transform_orig = transform_orig
         self.transform1 = transform1
         self.target_transform = target_transform
+        self.remove_alpha = remove_alpha
 
     def __len__(self):
         return len(self.img_files)
@@ -130,6 +290,8 @@ class SuperResDataset(Dataset):
     def __getitem__(self, idx):
         img_path = os.path.join(self.img_dir, self.img_files[idx])
         img = Image.open(img_path)
+        if self.remove_alpha and img.mode == 'RGBA':
+            img = img.convert('RGB')
         # Transform image to tensor, and save original version to return
         img = v2.functional.to_image(img)
         img = v2.functional.to_dtype(img, torch.float32, scale=True)
@@ -139,10 +301,132 @@ class SuperResDataset(Dataset):
             img_orig = img.clone()
         # Apply transform to image, if defined
         if self.transform1:
-            img1 = self.transform1(img)
+            img1 = self.transform1(img_orig)
         else:
-            img1 = img
+            img1 = img_orig
         return img_orig, img1
+
+
+class MBSRDataset(Dataset):
+    #
+    #   Pytorch Dataset with two input branches
+    #       branch1: primary input; this is the target image for super-resolution
+    #       branch2: secondary input; a related image whose features may enhance
+    #                   the SR of the primary branch.
+    #
+    def __init__(self, img_dir_br1, img_dir_br2, transform_orig=None,
+                 transform1=None, target_transform=None, remove_alpha=True):
+        self.img_dir_br1 = img_dir_br1
+        self.img_dir_br2 = img_dir_br2
+        self.img_files_br1 = [f for f in os.listdir(self.img_dir_br1) if
+                          os.path.isfile(os.path.join(self.img_dir_br1, f)) and f.endswith('.png')]
+        self.img_files_br2 = [f for f in os.listdir(self.img_dir_br2) if
+                              os.path.isfile(os.path.join(self.img_dir_br2, f)) and f.endswith('.png')]
+        self.transform_orig = transform_orig
+        self.transform1 = transform1
+        self.target_transform = target_transform
+        self.remove_alpha = remove_alpha
+
+    def __len__(self):
+        return len(self.img_files_br1)
+
+    def __getitem__(self, idx):
+        img_path_br1 = os.path.join(self.img_dir_br1, self.img_files_br1[idx])
+        img_path_br2 = os.path.join(self.img_dir_br2, self.img_files_br2[idx])
+        # print(f"{img_path_br1}, {img_path_br2}")
+        img_br1 = Image.open(img_path_br1)
+        img_br2 = Image.open(img_path_br2)
+        if self.remove_alpha and img_br1.mode == 'RGBA':
+            img_br1 = img_br1.convert('RGB')
+        if self.remove_alpha and img_br2.mode == 'RGBA':
+            img_br2 = img_br2.convert('RGB')
+        # Transform image to tensor, and save original version to return
+        img_br1 = v2.functional.to_image(img_br1)
+        img_br2 = v2.functional.to_image(img_br2)
+        img_br1 = v2.functional.to_dtype(img_br1, torch.float32, scale=True)
+        img_br2 = v2.functional.to_dtype(img_br2, torch.float32, scale=True)
+        if self.transform_orig:
+            img_orig_br1 = self.transform_orig(img_br1)
+            img_orig_br2 = self.transform_orig(img_br2)
+        else:
+            img_orig_br1 = img_br1.clone()
+            img_orig_br2 = img_br2.clone()
+        # Apply transform to image, if defined
+        if self.transform1:
+            img1_br1 = self.transform1(img_orig_br1)
+            img1_br2 = self.transform1(img_orig_br2)
+        else:
+            img1_br1 = img_orig_br1
+            img1_br2 = img_orig_br2
+        return img_orig_br1, img1_br1, img_orig_br2, img1_br2
+
+
+class ThreeBrDataset(Dataset):
+    #
+    #   Pytorch Dataset with three input branches
+    #       branch1: primary input; this is the target image for super-resolution
+    #       branch2: secondary input; a related image whose features may enhance
+    #                   the SR of the primary branch.
+    #       branch3: secondary input; another related image
+    #
+    def __init__(self, img_dir_br1, img_dir_br2, img_dir_br3, transform_orig=None,
+                 transform1=None, target_transform=None, remove_alpha=True):
+        self.img_dir_br1 = img_dir_br1
+        self.img_dir_br2 = img_dir_br2
+        self.img_dir_br3 = img_dir_br3
+        self.img_files_br1 = [f for f in os.listdir(self.img_dir_br1) if
+                          os.path.isfile(os.path.join(self.img_dir_br1, f)) and f.endswith('.png')]
+        self.img_files_br2 = [f for f in os.listdir(self.img_dir_br2) if
+                              os.path.isfile(os.path.join(self.img_dir_br2, f)) and f.endswith('.png')]
+        self.img_files_br3 = [f for f in os.listdir(self.img_dir_br3) if
+                              os.path.isfile(os.path.join(self.img_dir_br3, f)) and f.endswith('.png')]
+        self.transform_orig = transform_orig
+        self.transform1 = transform1
+        self.target_transform = target_transform
+        self.remove_alpha = remove_alpha
+
+    def __len__(self):
+        return len(self.img_files_br1)
+
+    def __getitem__(self, idx):
+        img_path_br1 = os.path.join(self.img_dir_br1, self.img_files_br1[idx])
+        img_path_br2 = os.path.join(self.img_dir_br2, self.img_files_br2[idx])
+        img_path_br3 = os.path.join(self.img_dir_br3, self.img_files_br2[idx])
+        # print(f"{img_path_br1}, {img_path_br2}, {img_path_br3}")
+        img_br1 = Image.open(img_path_br1)
+        img_br2 = Image.open(img_path_br2)
+        img_br3 = Image.open(img_path_br3)
+        if self.remove_alpha and img_br1.mode == 'RGBA':
+            img_br1 = img_br1.convert('RGB')
+        if self.remove_alpha and img_br2.mode == 'RGBA':
+            img_br2 = img_br2.convert('RGB')
+        if self.remove_alpha and img_br3.mode == 'RGBA':
+            img_br3 = img_br3.convert('RGB')
+        # Transform image to tensor, and save original version to return
+        img_br1 = v2.functional.to_image(img_br1)
+        img_br2 = v2.functional.to_image(img_br2)
+        img_br3 = v2.functional.to_image(img_br3)
+        img_br1 = v2.functional.to_dtype(img_br1, torch.float32, scale=True)
+        img_br2 = v2.functional.to_dtype(img_br2, torch.float32, scale=True)
+        img_br3 = v2.functional.to_dtype(img_br3, torch.float32, scale=True)
+        if self.transform_orig:
+            img_orig_br1 = self.transform_orig(img_br1)
+            img_orig_br2 = self.transform_orig(img_br2)
+            img_orig_br3 = self.transform_orig(img_br3)
+        else:
+            img_orig_br1 = img_br1.clone()
+            img_orig_br2 = img_br2.clone()
+            img_orig_br3 = img_br3.clone()
+        # Apply transform to image, if defined
+        if self.transform1:
+            img1_br1 = self.transform1(img_orig_br1)
+            img1_br2 = self.transform1(img_orig_br2)
+            img1_br3 = self.transform1(img_orig_br3)
+        else:
+            img1_br1 = img_orig_br1
+            img1_br2 = img_orig_br2
+            img1_br3 = img_orig_br3
+        return img_orig_br1, img1_br1, img1_br2, img1_br3
 
 
 def initialize_weights(module):
@@ -156,10 +440,11 @@ def initialize_weights(module):
 def main():
     imagepath = '../Isotropic turbulence/training_slices/'
     #
-    # Test image scaling transform and SuperResDataset
+    # Test image augmentation transform and scaling transform
     #
-    transform1 = SuperResTransform(32).transform
-    dataset = SuperResDataset(imagepath, transform1=transform1)
+    transform0 = AugmentTransform().transform
+    transform1 = ResizeTransform(32).transform
+    dataset = SuperResDataset(imagepath, transform_orig=transform0, transform1=transform1, remove_alpha=False)
     print(f"There are {len(dataset)} images in {imagepath}")
     image_orig, image_scaled = dataset[0]
     image_upscaled = torch.nn.functional.interpolate(image_scaled.unsqueeze(0), scale_factor=4,
@@ -194,18 +479,18 @@ def main():
     #
     # Test BaseSRNet
     #
-    down_net = BaseSRNet()
-    down_net.eval()
-    images_decode = down_net(images_scaled)
-    print(f"images_decode shape: {images_decode.shape}")
+    # down_net = BaseSRNet()
+    # down_net.eval()
+    # images_decode = down_net(images_scaled)
+    # print(f"images_decode shape: {images_decode.shape}")
 
     #
     # Test SRCNNmod
     #
-    srcnn_net = SRCNNmod(n0=4, f1=9, n1=64, f2=1, n2=32, f3=5)
-    srcnn_net.eval()
-    images_decode2 = srcnn_net(images_scaled)
-    print(f"images_decode2 shape: {images_decode2.shape}")
+    # srcnn_net = SRCNNmod(n0=4, f1=9, n1=64, f2=1, n2=32, f3=5)
+    # srcnn_net.eval()
+    # images_decode2 = srcnn_net(images_scaled)
+    # print(f"images_decode2 shape: {images_decode2.shape}")
 
     # Display all plots
     plt.show()
